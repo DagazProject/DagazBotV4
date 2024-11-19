@@ -1265,6 +1265,12 @@ async function execDump(bot, chatId, service, id) {
         const ctx = await hash.getContext(id, service);
         if (ctx) {
             const qm  = await hash.getQm(ctx);
+            qm.locations = qm.locations.sort(function (a, b) {
+                return a.id - b.id;
+            });
+            qm.jumps = qm.jumps.sort(function (a, b) {
+                return a.id - b.id;
+            });
             const s = JSON.stringify(qm, undefined, 2);
             fs.writeFileSync(__dirname + '/../upload/quest.json', s);
             bot.sendDocument(chatId, __dirname + '/../upload/quest.json');
