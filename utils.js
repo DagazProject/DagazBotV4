@@ -1302,7 +1302,8 @@ async function execSave(bot, chatId, service, id) {
     try {
         const ctx = await hash.getContext(id, service);
         if (ctx) {
-            const buf = writer.saveCtx(ctx);
+            const qm = await hash.getQm(ctx);
+            const buf = writer.saveCtx(ctx, qm);
             const d = new Date();
             const r = ctx.name.match(/^([^.]+)\./);
             if (r) {
@@ -1333,9 +1334,14 @@ async function uploadFile(bot, uid, service, doc, username, chatId) {
                         ctx.params[i].value  = save.params[i].value;
                         ctx.params[i].hidden = save.params[i].hidden;
                     }
-                    ctx.loc = save.loc;
-                    hash.addContext(uid, service, ctx);
                     const qm = await hash.getQm(ctx);
+                    for (let i = 0; i < qm.locations.length; i++) {
+                        if (qm.locations[i].id == save.loc) {
+                            ctx.loc = i;
+                            break;
+                        }
+                    }
+                    hash.addContext(uid, service, ctx);
                     ctx.message = await questMenu(bot, service, qm, ctx.loc, uid, chatId, ctx);
                 }
             } catch (error) {
