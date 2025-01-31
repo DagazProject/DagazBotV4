@@ -52,13 +52,7 @@ function Context(id, filename, username, loc, user_id, script_id) {
 
 async function loadContext(uid, service) {
   try {
-    const x = await db.query(`
-       select a.id, b.filename, coalesce(u.firstname, u.username) as username,
-              a.location_id, u.id as user_id, b.id as script_id
-       from   user_context a
-       inner  join users u on (u.id = a.user_id)
-       inner  join script b on (b.id = a.script_id)
-       where  u.user_id = $1 and a.service_id = $2`, [uid, service]);
+    const x = await db.query(`select id, filename, username, location_id, user_id, script_id from context_vw where user_id = $1 and service_id = $2`, [uid, service]);
     if (!x || x.rows.length == 0) return null;
     return Context(x.rows[0].id, x.rows[0].filename, x.rows[0].username, x.rows[0].location_id, x.rows[0].user_id, x.rows[0].script_id);
   } catch (error) {
@@ -77,11 +71,7 @@ function ContextParam(ix, value, hidden) {
 async function loadContextParams(ctx) {
   try {
     let r = [];
-    const x = await db.query(`
-       select a.ix, a.value, a.hidden
-       from   param_value a
-       where  context_id = $1
-       order  by a.ix`, [ctx]);
+    const x = await db.query(`select a.ix, a.value, a.hidden from param_value a where a.context_id = $1 order by a.ix`, [ctx]);
     for (let i = 0; i < x.rows.length; i++) {
        r.push(ContextParam(+x.rows[i].ix, +x.rows[i].value, x.rows[i].hidden));
     }
@@ -118,10 +108,7 @@ function Fixup(id, num, value) {
 async function getFixups(script, ctx) {
   try {
     let r = [];
-    const x = await db.query(`
-       select a.user_id, a.service_id
-       from   user_context a
-       where  a.id = $1`, [ctx]);
+    const x = await db.query(`select a.user_id, a.service_id from user_context a where a.id = $1`, [ctx]);
     if (!x || x.rows.length == 0) return r;
     const y = await db.query(`
        select b.id, a.param_num - 1 as ix, coalesce(c.value, b.def_value) as value
@@ -190,18 +177,9 @@ async function getWaiting(user, service, action) {
   try {
     const x = await db.query(`select id from users where user_id = $1`, [user]);
     if (!x || x.rows.length == 0) return null;
-    let y = await db.query(`
-      select a.id as ctx, b.param_id, a.hide_id
-      from   user_context a
-      inner  join action b on (b.command_id = a.command_id and b.id = a.location_id)
-      where  a.user_id = $1 and a.service_id = $2 and a.is_waiting`, [x.rows[0].id, service]);
+    let y = await db.query(`select ctx, param_id, hide_id, user_id, service_id from context_action_vw where user_id = $1 and service_id = $2`, [x.rows[0].id, service]);
     if (!y || y.rows.length == 0) {
-      y = await db.query(`
-        select b.id as ctx, p.param_id, b.hide_id
-        from   action a
-        inner  join user_context b on (b.command_id = a.command_id and b.location_id = a.parent_id and b.is_waiting)
-        inner  join action p on (p.id = a.parent_id)
-        where  b.user_id = $1 and b.service_id = $2 and a.id = $3`, [x.rows[0].id, service, action]);
+      y = await db.query(`select ctx, param_id, hide_id from waiting_vw where user_id = $1 and service_id = $2 and action_id = $3`, [x.rows[0].id, service, action]);
     }
     if (!y || y.rows.length == 0) return null;
     return Waiting(+y.rows[0].ctx, +y.rows[0].param_id, +y.rows[0].hide_id);
@@ -246,11 +224,7 @@ function Command(id, name, description, visible) {
 async function getCommands(user, service) {
   try {
     let r = [];
-    const x = await db.query(`
-       select a.is_developer, b.lang
-       from   user_service a
-       inner  join users b on (b.id = a.user_id)
-       where  a.user_id = $1 and a.service_id = $2`, [user, service]);
+    const x = await db.query(`select is_developer, lang from user_service_vw where user_id = $1 and service_id = $2`, [user, service]);
     if (!x || x.rows.length == 0) return r;
     const y = await db.query(`
        select a.id, a.name, coalesce(b.value, c.value) as description, a.is_visible
@@ -280,13 +254,7 @@ function SpParam(id, name, value, rn) {
 async function getCommandParams(command) {
   try {
     let r = [];
-    const x = await db.query(`
-       select b.id, b.name, b.default_value, a.order_num,
-              row_number() over (order by a.order_num) as rn
-       from   command_param a
-       inner  join param_type b on (b.id = a.param_id)
-       where  a.command_id = $1
-       order  by a.order_num`, [command]);
+    const x = await db.query(`select id, name, default_value, order_num, rn from command_param_vw where command_id = $1 order by order_num`, [command]);
     for (let i = 0; i < x.rows.length; i++) {
        r.push(SpParam(+x.rows[i].id, x.rows[i].name, x.rows[i].default_value, +x.rows[i].rn));
     }
@@ -334,9 +302,7 @@ async function replacePatterns(ctx, value) {
   while (r) {
     const name = r[1];
     const x = await db.query(
-      `select c.default_value as value, c.id
-       from   param_type c
-       where  c.name = $1`, [name]);
+      `select c.default_value as value, c.id from param_type c where c.name = $1`, [name]);
     if (!x && x.rows.length == 0) continue;
     const y = await db.query(
       `select coalesce(b.value, $1) as value
@@ -363,15 +329,7 @@ function Caption(value, chat, lang, width, param) {
 
 async function getCaption(ctx) {
   try {
-    const x = await db.query(`
-       select coalesce(c.value, d.value) as value, u.chat_id, b.param_id,
-              coalesce(c.lang, d.lang) as lang, coalesce(b.width, 1) as width
-       from   user_context a
-       inner  join action b on (b.command_id = a.command_id and b.id = a.location_id)
-       inner  join users u on (u.id = a.user_id)
-       left   join localized_string c on (c.action_id = b.id and c.lang = u.lang)
-       inner  join localized_string d on (d.action_id = b.id and d.lang = 'en')
-       where  a.id = $1`, [ctx]);
+    const x = await db.query(`select value, chat_id, param_id, lang, width from caption_vw where id = $1`, [ctx]);
        if (!x || x.rows.length == 0) return null;
        let value = await replacePatterns(ctx, x.rows[0].value);
        return Caption(value, +x.rows[0].chat_id, x.rows[0].lang, +x.rows[0].width, +x.rows[0].param_id);
@@ -391,9 +349,7 @@ async function waitValue(ctx, msg, hide) {
 async function getParamValue(ctx, param) {
   try {
     const x = await db.query(`
-       select a.value
-       from   param_value a
-       where  a.context_id = $1 and a.param_id = $2`, [ctx, param]);
+       select a.value from param_value a where a.context_id = $1 and a.param_id = $2`, [ctx, param]);
     if (!x || x.rows.length == 0) return null;
     return x.rows[0].value;
   } catch (error) {
@@ -438,11 +394,7 @@ function Request(user, service, value, type) {
 
 async function getRequest(ctx) {
   try {
-    const x = await db.query(`
-       select a.user_id, a.service_id, b.request, b.request_type
-       from   user_context a
-       inner  join action b on (b.command_id = a.command_id and b.id = a.location_id)
-       where  a.id = $1`, [ctx]);
+    const x = await db.query(`select user_id, service_id, request, request_type from request_vw where id = $1`, [ctx]);
     if (!x || x.rows.length == 0) return null;
     return Request(+x.rows[0].user_id, +x.rows[0].service_id, x.rows[0].request, x.rows[0].request_type);
   } catch (error) {
@@ -462,16 +414,7 @@ function SpParam(id, name, value, rn) {
 async function getSpParams(ctx, user, service) {
   try {
     let r = [];
-    const x = await db.query(`
-       select d.id, c.name, coalesce(coalesce(e.value, d.default_value), c.default_value) as value, c.order_num,
-              row_number() over (order by c.order_num) as rn
-       from   user_context a
-       inner  join action b on (b.command_id = a.command_id and b.id = a.location_id)
-       inner  join request_param c on (action_id = b.id)
-       left   join param_type d on (d.id = c.param_id)
-       left   join param_value e on (e.param_id = d.id and e.context_id = a.id)
-       where  a.id = $1
-       order  by c.order_num`, [ctx]);
+    const x = await db.query(`select id, name, value, order_num, rn from sp_param_vw where ctx_id = $1 order by order_num`, [ctx]);
     for (let i = 0; i < x.rows.length; i++) {
        let value = x.rows[i].value;
        if (x.rows[i].name == 'pUser') {
@@ -498,12 +441,7 @@ function SpResult(name, param) {
 async function getSpResults(ctx) {
   try {
     let r = [];
-    const x = await db.query(`
-       select c.name, c.param_id
-       from   user_context a
-       inner  join action b on (b.command_id = a.command_id and b.id = a.location_id)
-       inner  join response_param c on (action_id = b.id)
-       where  a.id = $1`, [ctx]);
+    const x = await db.query(`select name, param_id from sp_result_vw where id = $1`, [ctx]);
     for (let i = 0; i < x.rows.length; i++) {
        r.push(SpResult(x.rows[i].name, +x.rows[i].param_id));
     }
@@ -532,10 +470,7 @@ function Script(id, filename, bonus, penalty) {
 
 async function getScript(id) {
   try {
-    const x = await db.query(`
-       select a.id, a.filename, a.win_bonus, a.death_penalty
-       from   script a
-       where  a.id = $1`, [id]);
+    const x = await db.query(`select a.id, a.filename, a.win_bonus, a.death_penalty from script a where a.id = $1`, [id]);
     if (!x || x.rows.length == 0) return null;
     return Script(+x.rows[0].id, x.rows[0].filename, +x.rows[0].win_bonus, +x.rows[0].death_penalty);
   } catch (error) {
@@ -555,9 +490,7 @@ function User(id, uid, name, chat) {
 async function getUserByUid(uid) {
   try {
     const x = await db.query(`
-       select b.id, b.user_id, coalesce(b.firstname, b.username) as name, b.chat_id
-       from   users b
-       where  b.user_id = $1`, [uid]);
+       select b.id, b.user_id, coalesce(b.firstname, b.username) as name, b.chat_id from users b where b.user_id = $1`, [uid]);
     if (!x || x.rows.length == 0) return null;
     return User(+x.rows[0].id, +x.rows[0].user_id, x.rows[0].name, +x.rows[0].chat_id);
   } catch (error) {
@@ -567,11 +500,7 @@ async function getUserByUid(uid) {
 
 async function getUserByCtx(ctx) {
   try {
-    const x = await db.query(`
-       select b.id, b.user_id, coalesce(b.firstname, b.username) as name, b.chat_id
-       from   user_context a
-       inner  join users b on (b.id = a.user_id)
-       where  a.id = $1`, [ctx]);
+    const x = await db.query(`select id, user_id, name, chat_id from user_ctx_vw where ctx_id = $1`, [ctx]);
     if (!x || x.rows.length == 0) return null;
     return User(+x.rows[0].id, +x.rows[0].user_id, x.rows[0].name, +x.rows[0].chat_id);
   } catch (error) {
@@ -617,9 +546,7 @@ function Message(id, chat_id) {
 async function inBlackList(chatId) {
   try {
     const x = await db.query(`
-      select count(*) cnt
-      from   black_list a
-      where  a.chat_id = $1`, [chatId]);
+      select count(*) cnt from black_list a where a.chat_id = $1`, [chatId]);
     if (!x || x.rows.length == 0) return false;
     return x.rows[0].cnt > 0;
   } catch (error) {
@@ -629,12 +556,7 @@ async function inBlackList(chatId) {
 
 async function getParentMessage(id) {
   try {
-    const x = await db.query(`
-       select b.message_id, c.chat_id
-       from   client_message a
-       inner  join message b on (b.id = a.parent_id)
-       inner  join users c on (c.id = b.user_id)
-       where  a.message_id = $1`, [id]);
+    const x = await db.query(`select message_id, chat_id from message_vw where id = $1`, [id]);
     if (!x || x.rows.length == 0) return null;
     return Message(x.rows[0].message_id, x.rows[0].chat_id);
   } catch (error) {
@@ -665,10 +587,7 @@ async function getChatsByLang(serv, lang) {
   try {
     let r = [];
     const x = await db.query(`
-       select a.chat_id 
-       from   users a
-       inner  join user_service b on (b.user_id = a.id and b.service_id = $1)
-       where  a.lang = $2`, [serv, lang]);
+       select a.chat_id from users a inner join user_service b on (b.user_id = a.id and b.service_id = $1) where a.lang = $2`, [serv, lang]);
     for (let i = 0; i < x.rows.length; i++) {
         r.push(x.rows[i].chat_id);
     }
@@ -690,9 +609,7 @@ async function getAdminChats() {
   try {
     let r = [];
     const x = await db.query(`
-       select a.chat_id 
-       from   users a
-       where  a.is_admin`);
+       select a.chat_id from users a where a.is_admin`);
     for (let i = 0; i < x.rows.length; i++) {
        r.push(x.rows[i].chat_id);
     }
@@ -712,11 +629,7 @@ function ScheduledComand(cmd, timeout) {
 async function getScheduledComands(service) {
   try {
     let r = [];
-    const x = await db.query(`
-       select a.command_id, a.timeout
-       from   task a
-       inner  join command b on (b.id = a.command_id)
-       where  b.service_id = $1`, [service]);
+    const x = await db.query(`select command_id, timeout from scheduled_vw where service_id = $1`, [service]);
     for (let i = 0; i < x.rows.length; i++) {
        r.push(ScheduledComand(x.rows[i].command_id, x.rows[i].timeout));
     }
@@ -795,9 +708,7 @@ async function acceptInfo(user, info) {
 async function getQuestText(script, type) {
   try {
     const x = await db.query(`
-      select a.value
-      from   quest_text a
-      where  a.script_id = $1 and a.type_id = $2`, [script, type]);
+      select a.value from quest_text a where a.script_id = $1 and a.type_id = $2`, [script, type]);
    if (!x || x.rows.length == 0) return null;
    return x.rows[0].value;
   } catch (error) {
@@ -816,9 +727,7 @@ async function getQuestContexts(service, user) {
   try {
     let r = [];
     const x = await db.query(`
-      select a.id, a.hide_id
-      from   user_context a
-      where  a.service_id = $1 and a.user_id = $2 and not a.script_id is null`, [service, user]);
+      select a.id, a.hide_id from user_context a where a.service_id = $1 and a.user_id = $2 and not a.script_id is null`, [service, user]);
     for (let i = 0; i < x.rows.length; i++) {
         r.push(UserContext(+x.rows[i].id, x.rows[i].hide_id));
     }
@@ -903,11 +812,7 @@ async function getScore(uid) {
 
 async function getCredits(uid) {
   try {
-    const x = await db.query(`
-      select b.value
-      from   users a 
-      inner  join global_value b on (b.user_id = a.id and b.param_id = 3)
-      where  a.user_id = $1`, [uid]);
+    const x = await db.query(`select value from credits_vw where user_id = $1`, [uid]);
     if (!x || x.rows.length == 0) return null;
     return x.rows[0].value;
   } catch (error) {
@@ -1005,14 +910,7 @@ function SessUser(num, name) {
 async function getSessionUsers(sess) {
   try {
     let r = [];
-    const x = await db.query(`
-      select b.user_num, coalesce(d.firstname, d.username) as name
-      from   session a
-      inner  join user_session b on (b.session_id = a.id)
-      inner  join session_type c on (c.id = a.sessiontype_id and a.curr_users >= c.min_users and a.curr_users <= c.max_users)
-      inner  join users d on (d.id = b.user_id)
-      where  a.id = $1
-      order  by b.user_num`, [sess]);
+    const x = await db.query(`select user_num, name from session_vw where id = $1 order by user_num`, [sess]);
     for (let i = 0; i < x.rows.length; i++) {
       r.push(SessUser(x.rows[i].user_num, x.rows[i].name));
     }
@@ -1024,11 +922,7 @@ async function getSessionUsers(sess) {
 
 async function isCompletedSession(sess) {
   try {
-    const x = await db.query(`
-      select a.id
-      from   session a
-      inner  join session_type c on (c.id = a.sessiontype_id and a.curr_users >= c.min_users and a.curr_users <= c.max_users)
-      where  a.id = $1`, [sess]);
+    const x = await db.query(`select id from completed_session_vw where id = $1`, [sess]);
       if (!x || x.rows.length == 0) return false;
       return true;
   } catch (error) {
@@ -1047,11 +941,7 @@ function SessParam(num, ix, value) {
 async function getSessionParams(sess, slot) {
   try {
     let r = [];
-    const x = await db.query(`
-      select b.user_num, a.param_index, a.param_value
-      from   session_param a
-      inner  join user_session b on (b.session_id = a.session_id and b.user_id = a.user_id)
-      where  a.session_id = $1 and a.slot_index = $2`, [sess, slot]);
+    const x = await db.query(`select b.user_num, a.param_index, a.param_value from session_param_vw where session_id = $1 and slot_index = $2`, [sess, slot]);
     for (let i = 0; i < x.rows.length; i++) {
       r.push(SessParam(x.rows[i].user_num, x.rows[i].param_index, x.rows[i].param_value));
     }
@@ -1063,10 +953,7 @@ async function getSessionParams(sess, slot) {
 
 async function getUserLang(uid) {
   try {
-    const x = await db.query(`
-      select a.lang
-      from   users a
-      where  a.user_id = $1`, [uid]);
+    const x = await db.query(`select a.lang from users a where a.user_id = $1`, [uid]);
     if (!x || x.rows.length == 0) return 'en';
     return x.rows[0].lang;
   } catch (error) {
@@ -1078,17 +965,11 @@ async function decorateMessage(user, text) {
   try {
     let r = '';
     const x = await db.query(`
-      select coalesce(a.username, a.firstname) as username
-      from   users a
-      where  a.id = $1`, [user]);
+      select coalesce(a.username, a.firstname) as username from users a where a.id = $1`, [user]);
     if (x && x.rows.length > 0) {
         r = x.rows[0].username;
     }
-    const y = await db.query(`
-        select b.filename || ':' || a.location_id as loc
-        from   user_context a
-        inner  join script b on (b.id = a.script_id)
-        where  a.user_id = $1`, [user]);
+    const y = await db.query(`select loc from decorate_vw where user_id = $1`, [user]);
     if (y && y.rows.length > 0) {
           r = r + '[' + y.rows[0].loc + ']';
     }
