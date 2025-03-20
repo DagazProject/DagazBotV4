@@ -411,10 +411,39 @@ function SpParam(id, name, value, rn) {
   };
 }
 
-async function getSpParams(ctx, user, service) {
+/*async function getSpParams(ctx, user, service) {
   try {
     let r = [];
     const x = await db.query(`select id, name, value, order_num, rn from sp_param_vw where ctx_id = $1 order by order_num`, [ctx]);
+    for (let i = 0; i < x.rows.length; i++) {
+       let value = x.rows[i].value;
+       if (x.rows[i].name == 'pUser') {
+           value = user;
+       }
+       if (x.rows[i].name == 'pService') {
+           value = service;
+       }
+       r.push(SpParam(+x.rows[i].id, x.rows[i].name, value, +x.rows[i].rn));
+    }
+    return r;
+  } catch (error) {
+    console.error(error);
+  }
+}*/
+
+async function getSpParams(ctx, user, service) {
+  try {
+    let r = [];
+    const x = await db.query(`
+       select d.id, c.name, coalesce(coalesce(e.value, d.default_value), c.default_value) as value, c.order_num,
+              row_number() over (order by c.order_num) as rn
+       from   user_context a
+       inner  join action b on (b.command_id = a.command_id and b.id = a.location_id)
+       inner  join request_param c on (action_id = b.id)
+       left   join param_type d on (d.id = c.param_id)
+       left   join param_value e on (e.param_id = d.id and e.context_id = a.id)
+       where  a.id = $1
+       order  by c.order_num`, [ctx]);
     for (let i = 0; i < x.rows.length; i++) {
        let value = x.rows[i].value;
        if (x.rows[i].name == 'pUser') {
