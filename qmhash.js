@@ -149,6 +149,7 @@ async function load(name, username) {
              }
         }
         const qm = parser.parse(data);
+        await ds.addStat(username, name, 1);
         let loc = null;
         for (let i = 0; i < qm.locations.length; i++) {
             if (qm.locations[i].isStarting) {

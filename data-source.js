@@ -734,6 +734,14 @@ async function acceptInfo(user, info) {
   }
 }
 
+async function addStat(user, script, stat) {
+  try {
+    await db.query(`insert into stat(username, script, type_id) values ($1, $2, $3)`, [user, script, stat]);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 async function getQuestText(script, type) {
   try {
     const x = await db.query(`
@@ -1073,3 +1081,4 @@ module.exports.getSessionParams = getSessionParams;
 module.exports.getUserLang = getUserLang;
 module.exports.decorateMessage = decorateMessage;
 module.exports.inBlackList = inBlackList;
+module.exports.addStat = addStat;
