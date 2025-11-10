@@ -971,12 +971,15 @@ async function endQuest(bot, service, chatId, ctx, qm, crit) {
                     }, undefined, undefined);
                 }
             }
+            await ds.addStat(ctx.username, ctx.name, 2);
             await ds.winQuest(ctx.user, ctx.script);
        }
        if (qm.locations[ctx.loc].isFaily || (crit == 1)) {
+           await ds.addStat(ctx.username, ctx.name, 3);
            await ds.failQuest(ctx.user, ctx.script);
        }
        if (qm.locations[ctx.loc].isFailyDeadly || (crit == 3)) {
+           await ds.addStat(ctx.username, ctx.name, 4);
            await ds.deathQuest(ctx.user, ctx.script);
        }
        await ds.closeContext(ctx.id);
